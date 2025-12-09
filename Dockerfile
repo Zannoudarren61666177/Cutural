@@ -22,14 +22,17 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 # Set working directory
 WORKDIR /var/www/html
 
-# Copy project
+# Copy project files
 COPY . .
+
+# Copy .env.example to .env if not present
+RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
 # Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader
 
 # Laravel optimize
-RUN php artisan key:generate
+RUN php artisan key:generate --ansi
 RUN php artisan config:cache
 RUN php artisan route:cache
 RUN php artisan view:cache
