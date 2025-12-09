@@ -13,14 +13,13 @@ class PaymentController extends Controller
 {
     public function __construct()
     {
-        // Initialisation FedaPay
-        // Remplace par tes clés réelles !
+        // Configuration FedaPay
         FedaPay::setApiKey(env('FEDAPAY_SECRET_KEY'));
-        FedaPay::setEnvironment(env('FEDAPAY_ENV', 'sandbox')); 
+        FedaPay::setEnvironment(env('FEDAPAY_ENV', 'sandbox')); // sandbox ou live
     }
 
     /**
-     * Affiche la page de paiement
+     * Page de choix du paiement
      */
     public function showPaymentForm(Contenu $contenu)
     {
@@ -34,55 +33,57 @@ class PaymentController extends Controller
     }
 
     /**
-     * Création de la commande + transaction
+     * Création commande + transaction FedaPay
      */
     public function processPayment(Request $request, Contenu $contenu)
     {
         $user = Auth::user();
 
-        // Création de la commande locale
+        // Création commande en base
         $commande = Commande::create([
-            'user_id' => $user->id_user,
-            'contenu_id' => $contenu->id_contenu,
-            'montant' => $contenu->prix,
-            'statut' => 'en_attente',
+            'user_id'       => $user->id_user,
+            'contenu_id'    => $contenu->id_contenu,
+            'montant'       => $contenu->prix,
+            'statut'        => 'en_attente',
         ]);
 
         try {
-            // Création de la transaction FedaPay
+            // Transaction FedaPay
             $transaction = Transaction::create([
-                'description' => "Paiement du contenu : {$contenu->titre}",
-                'amount' => $contenu->prix,
-                'currency' => ['iso' => 'XOF'],   // OBLIGATOIRE
-                'callback_url' => route('payments.callback', $commande->id),
+                'description'   => "Paiement du contenu : {$contenu->titre}",
+                'amount'        => $contenu->prix,
+                'currency'      => ['iso' => 'XOF'],
+                'callback_url'  => route('payments.callback', $commande->id),
+                'success_url'   => route('contenus.show', $contenu->id_contenu),
+                'cancel_url'    => url()->previous(),
             ]);
 
-            // Sauvegarde de l'ID transaction
+            // Sauvegarder l’id transaction FedaPay
             $commande->update([
-                'fedapay_token' => $transaction->id,
+                'fedapay_token' => $transaction->id
             ]);
 
-            // URL de redirection vers la caisse FedaPay
-            $checkoutUrl = $transaction->generateCheckoutUrl();
+            // Checkout URL (nouveau SDK)
+            $checkout = $transaction->checkout();
 
-            return redirect($checkoutUrl);
+            return redirect()->away($checkout->url);
 
         } catch (\Exception $e) {
             return redirect()
                 ->back()
-                ->with('error', 'Erreur de paiement : ' . $e->getMessage());
+                ->with('error', 'Erreur de paiement : '.$e->getMessage());
         }
     }
 
     /**
-     * Callback FedaPay après paiement
+     * Retour FedaPay → callback
      */
     public function handleCallback($commandeId)
     {
         $commande = Commande::findOrFail($commandeId);
 
         try {
-            // Récupération de la transaction FedaPay
+            // Récupérer la transaction réelle
             $transaction = Transaction::retrieve($commande->fedapay_token);
 
             if ($transaction->status === 'approved') {
@@ -90,20 +91,20 @@ class PaymentController extends Controller
 
                 return redirect()
                     ->route('contenus.show', $commande->contenu_id)
-                    ->with('success', 'Paiement réussi ! Vous pouvez lire le contenu complet.');
+                    ->with('success', 'Paiement réussi ! Vous pouvez accéder au contenu.');
             }
 
-            // Paiement échoué
+            // Si refusé
             $commande->update(['statut' => 'échoué']);
 
             return redirect()
                 ->route('contenus.show', $commande->contenu_id)
-                ->with('error', 'Le paiement a échoué. Veuillez réessayer.');
-
-        } catch (\Exception $e) {
+                ->with('error', 'Le paiement a échoué.');
+        } 
+        catch (\Exception $e) {
             return redirect()
                 ->route('contenus.show', $commande->contenu_id)
-                ->with('error', 'Erreur callback : ' . $e->getMessage());
+                ->with('error', 'Callback error: '.$e->getMessage());
         }
     }
 }
